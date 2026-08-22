@@ -17,3 +17,6 @@ enable_testing()
 add_executable(test_solver tests/test_solver.cpp)
 target_link_libraries(test_solver PRIVATE diffusion_core)
 add_test(NAME solver_tests COMMAND test_solver)
+
+add_executable(validate src/validate.cpp)
+target_link_libraries(validate PRIVATE diffusion_core)

@@ -45,4 +45,13 @@ void step(const Field& current, Field& next, const SimulationParams& params);
 /// Advance the field `n_steps` times, swapping buffers internally.
 void run(Field& field, const SimulationParams& params, int n_steps);
 
+/// Exact solution for a point source of mass M at the domain centre,
+/// diffusing in an unbounded 2D domain.
+double gaussian_solution(double r, double t, double mass, double diffusivity);
+
+
+/// L2 norm of the difference between a field and the analytical solution.
+double l2_error(const Field& field, double t, double mass, const SimulationParams& params);
+
 }  // namespace diffusion
+
