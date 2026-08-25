@@ -17,7 +17,8 @@ void cuda_check(cudaError_t err, const char* what) {
 }
 
 __global__ void diffusion_kernel(const double* current, double* next,
-                                 int nx, int ny, double alpha) {
+                                 int nx, int ny, double alpha,
+                                 double u, double v, double dt_over_dx) {
     const int i = blockIdx.y * blockDim.y + threadIdx.y;
     const int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nx || j >= ny) return;
@@ -30,8 +31,20 @@ __global__ void diffusion_kernel(const double* current, double* next,
     const double left  = (j == 0)      ? centre : current[idx - 1];
     const double right = (j == ny - 1) ? centre : current[idx + 1];
 
-    next[idx] = centre + alpha * (up + down + left + right - 4.0 * centre);
+    double value = centre + alpha * (up + down + left + right - 4.0 * centre);
+
+    if (u != 0.0) {
+        const double grad_x = (u > 0.0) ? (centre - up) : (down - centre);
+        value -= u * dt_over_dx * grad_x;
+    }
+    if (v != 0.0) {
+        const double grad_y = (v > 0.0) ? (centre - left) : (right - centre);
+        value -= v * dt_over_dx * grad_y;
+    }
+
+    next[idx] = value;
 }
+
 
 }  // namespace
 
@@ -41,6 +54,7 @@ void run_cuda(Field& field, const SimulationParams& params, int n_steps) {
     const std::size_t bytes = field.data().size() * sizeof(double);
     const double alpha =
         params.diffusivity * params.dt / (params.dx * params.dx);
+    const double dt_over_dx = params.dt / params.dx;
 
     double* d_current = nullptr;
     double* d_next = nullptr;
@@ -55,7 +69,7 @@ void run_cuda(Field& field, const SimulationParams& params, int n_steps) {
                     (nx + block.y - 1) / block.y);
 
     for (int s = 0; s < n_steps; ++s) {
-        diffusion_kernel<<<grid, block>>>(d_current, d_next, nx, ny, alpha);
+        diffusion_kernel<<<grid, block>>>(d_current, d_next, nx, ny, alpha, params.u, params.v, dt_over_dx);
         cuda_check(cudaGetLastError(), "kernel launch");
         std::swap(d_current, d_next);
     }

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
+#include <functional>
 
 
 constexpr double kPi = 3.14159265358979323846;
@@ -26,12 +27,18 @@ double max_stable_dt(double diffusivity, double dx) {
     return (dx * dx) / (4.0 * diffusivity);
 }
 
+double max_stable_dt_advective(const SimulationParams& params) {
+    const double diff_limit = max_stable_dt(params.diffusivity, params.dx);
+    const double speed = std::fabs(params.u) + std::fabs(params.v);
+    if (speed == 0.0) return diff_limit;
+    return std::min(diff_limit, params.dx / speed);
+}
+
 void step(const Field& current, Field& next, const SimulationParams& params) {
     const std::size_t nx = current.nx();
     const std::size_t ny = current.ny();
     const double alpha =
         params.diffusivity * params.dt / (params.dx * params.dx);
-
     for (std::size_t i = 0; i < nx; ++i) {
         for (std::size_t j = 0; j < ny; ++j) {
             // Ghost cells reflect: out-of-domain neighbor = centre, so NO flux
@@ -42,9 +49,25 @@ void step(const Field& current, Field& next, const SimulationParams& params) {
             const double right = (j == ny - 1) ? centre : current.at(i, j + 1);
 
             const double laplacian = up + down + left + right - 4.0 * centre;
-            next.at(i, j) = centre + alpha * laplacian;
+            double value = centre + alpha * laplacian;
+
+            // Upwind: take the gradient from the direction flow comes from.
+            // Centred differences are unstable for advection.
+            if (params.u != 0.0) {
+                const double grad_x = (params.u > 0.0) ? (centre - up)
+                                                       : (down - centre);
+                value -= params.u * params.dt / params.dx * grad_x;
+            }
+            if (params.v != 0.0) {
+                const double grad_y = (params.v > 0.0) ? (centre - left)
+                                                       : (right - centre);
+                value -= params.v * params.dt / params.dx * grad_y;
+            }
+
+            next.at(i, j) = value;
         }
     }
+    
 }
 
 void run(Field& field, const SimulationParams& params, int n_steps) {
@@ -77,6 +100,16 @@ double l2_error(const Field& field, double t, double mass, const SimulationParam
         }
     }
     return std::sqrt(sum_sq/(field.nx()*field.ny()));
+}
+
+void run_with_hook(Field& field, const SimulationParams& params, int n_steps,
+                   const std::function<void(Field&, int)>& hook) {
+    Field buffer(field.nx(), field.ny());
+    for (int s = 0; s < n_steps; ++s) {
+        step(field, buffer, params);
+        std::swap(field.data(), buffer.data());
+        hook(field, s);
+    }
 }
 
 }  // namespace diffusion

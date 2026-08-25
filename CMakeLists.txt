@@ -13,6 +13,9 @@ target_link_libraries(diffusion PRIVATE diffusion_core)
 add_executable(validate src/validate.cpp)
 target_link_libraries(validate PRIVATE diffusion_core)
 
+add_executable(gradient src/gradient.cpp)
+target_link_libraries(gradient PRIVATE diffusion_core)
+
 enable_testing()
 add_executable(test_solver tests/test_solver.cpp)
 target_link_libraries(test_solver PRIVATE diffusion_core)

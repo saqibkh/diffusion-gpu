@@ -125,6 +125,47 @@ int main() {
         check(err_at(101) < err_at(51), "refining the grid reduces error");
     }
 
+    // Pure advection transports without creating or destroying mass.
+    {
+        Field f(64, 64);
+        for (std::size_t j = 20; j < 30; ++j) f.at(32, j) = 10.0;
+        const double initial = f.sum();
+
+        SimulationParams p;
+        p.diffusivity = 0.0;
+        p.v = 0.5;
+        p.dt = max_stable_dt_advective(p) * 0.5;
+        run(f, p, 20);
+
+        check_near(f.sum(), initial, 1e-6, "advection conserves mass");
+    }
+
+    // Flow in +v carries material toward higher j.
+    {
+        Field f(64, 64);
+        f.at(32, 20) = 100.0;
+
+        SimulationParams p;
+        p.diffusivity = 0.01;
+        p.v = 0.5;
+        p.dt = max_stable_dt_advective(p) * 0.5;
+        run(f, p, 30);
+
+        double upstream = 0.0, downstream = 0.0;
+        for (std::size_t i = 0; i < 64; ++i)
+            for (std::size_t j = 0; j < 64; ++j)
+                (j < 20 ? upstream : downstream) += f.at(i, j);
+
+        check(downstream > upstream, "advection transports downstream");
+    }
+
+    {
+        SimulationParams p;
+        p.u = 10.0;
+        check(max_stable_dt_advective(p) < max_stable_dt(p.diffusivity, p.dx),
+              "advection tightens the stability limit");
+    }
+
     std::cout << (failures == 0 ? "\nAll tests passed.\n" : "\nFAILURES.\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

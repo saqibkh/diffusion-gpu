@@ -47,6 +47,23 @@ bit-for-bit at every grid size.
 *200 timesteps, double precision. NVIDIA GeForce RTX 4050 Laptop GPU,
 CUDA 12.6, MSVC 19.41. CPU baseline is single-threaded.*
 
+## Microfluidic gradient generation
+
+Two co-flowing streams - one at unit concentration, one at zero - enter a 400x120 channel and mix by diffusion as advection carries them downstream. This is the mechanism behind microfluidic gradient generators, including the device in my first-author publication. 
+
+![Gradient formation](docs/gradient.gif)
+
+The outlet concentration profile is a smooth sigmoid, approximately linear
+across the central half of the channel:
+
+![Outlet profile](docs/outlet_profile.png)
+
+The advection term uses upwind differencing rather than a centred stencil,
+which is unstable for hyperbolic terms. Upwind is first-order accurate, so the
+combined scheme is second-order in the diffusive term and first-order in the
+advective one. The timestep must satisfy both the diffusive stability limit and
+the CFL condition; `max_stable_dt_advective` returns the tighter of the two.
+
 ### Reading these numbers
 
 **Speedup grows with problem size** because the GPU's fixed costs — memory
@@ -116,11 +133,15 @@ the conservation test.
 timestep loop and back once after; the double-buffer swap exchanges pointers
 on the device. Copying each step would make the GPU slower than the CPU.
 
+**Boundary conditions re-imposed per step.** The inlet is held fixed by a callback applied after each timestep, so the two streams keep feeding rather than washing downstream.
+
 ## Status
 
 - [x] CPU finite-difference diffusion solver
 - [x] Analytical validation with measured convergence order
-- [x] CUDA kernel, verified bit-identical to the CPU baseline
+- [x] CUDA kernel, verified against the CPU baseline
 - [x] CPU vs GPU benchmark across grid sizes
-- [ ] Advection term and microfluidic gradient-generator geometry
+- [x] Advection with upwind differencing
+- [x] Microfluidic gradient-generator simulation
 - [ ] Shared-memory tiling and roofline analysis
+- [ ] Branching "Christmas tree" channel geometry
