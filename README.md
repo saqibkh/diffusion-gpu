@@ -31,21 +31,76 @@ unit test.
 
 ## Performance
 
-Same kernel, same results — the GPU output matches the CPU baseline
-bit-for-bit at every grid size.
+Both GPU kernels produce results identical to the CPU baseline to machine
+precision.
 
 ![GPU speedup](docs/speedup.png)
 
-| Grid | CPU (ms) | GPU (ms) | Speedup |
-|------|----------|----------|---------|
-| 128² | 4.68 | 2.23 | 2.1× |
-| 256² | 18.39 | 3.48 | 5.3× |
-| 512² | 69.42 | 6.09 | 11.4× |
-| 1024² | 288.00 | 18.69 | 15.4× |
-| 2048² | 1268.61 | 97.91 | 13.0× |
+| Grid | CPU (ms) | Naive GPU (ms) | Tiled GPU (ms) | Speedup | Tiled vs naive |
+|------|----------|----------------|----------------|---------|----------------|
+| 128² | 10.80 | 4.24 | 4.33 | 2.5× | 0.98× |
+| 256² | 43.33 | 4.97 | 5.03 | 8.7× | 0.99× |
+| 512² | 155.05 | 8.18 | 8.51 | 19.0× | 0.96× |
+| 1024² | 631.20 | 25.53 | 25.41 | 24.7× | 1.00× |
+| 2048² | 2901.19 | 104.30 | 106.43 | 27.8× | 0.98× |
 
 *200 timesteps, double precision. NVIDIA GeForce RTX 4050 Laptop GPU,
 CUDA 12.6, MSVC 19.41. CPU baseline is single-threaded.*
+
+### Reading these numbers
+
+**Speedup grows with problem size** because the GPU's fixed costs — memory
+allocation, host-device transfer, kernel launch — are amortized over more
+parallel work. At 128² the grid has only ~16k cells, too few to fill the
+device.
+
+**Double precision is a significant handicap on this hardware.** Consumer
+GeForce cards restrict FP64 throughput to 1/64 of FP32. The ~28× measured here
+is on the restricted path; the same kernel in single precision would run
+substantially faster.
+
+**GPU timings require a warmup.** CUDA context initialisation cost over a
+second on the first call — charged entirely to whichever measurement ran first.
+The benchmark discards a warmup run before timing.
+
+**CPU timings vary between runs** on a laptop under thermal and background
+load; the figures above are from a single run and shifted by up to 2× across
+sessions.
+
+### Shared-memory tiling did not help — and the roofline explains why
+
+The naive kernel reads each cell's four neighbours from global memory, so a
+value can be fetched up to five times. The textbook optimisation is to stage a
+tile of the grid in shared memory with a one-cell halo, synchronise, then
+compute entirely on-chip. I implemented that kernel and it produced identical
+results — but no speedup, and marginally slower at most sizes.
+
+The roofline model explains the outcome.
+
+![Roofline](docs/roofline.png)
+
+The stencil performs about 7 floating-point operations per cell while moving at
+minimum 16 bytes (one read, one write), giving an arithmetic intensity of
+**0.44 flops/byte**. The ridge point for this card — FP64 peak divided by
+memory bandwidth — is **140 GFLOPS / 192 GB/s ≈ 0.73 flops/byte**. Since 0.44
+sits below the ridge, the kernel is memory-bound by construction: no amount of
+compute optimisation can help.
+
+At that arithmetic intensity, the bandwidth ceiling is 0.44 × 192 GB/s ≈
+**84 GFLOPS**. The measured throughput at 1024² is
+7 × 1024² × 200 / 25.5 ms ≈ **57.5 GFLOPS**, or about **68% of the ceiling**.
+
+So the kernel was already close to the hardware limit, and the remaining gap
+was not redundant global reads — Ada's L2 cache was already servicing most of
+the neighbour reuse, since a stencil's access pattern is highly local. Shared
+memory re-implemented in software, with an added `__syncthreads()` barrier and
+divergent halo-loading branches, a reuse the cache provided for free.
+
+Getting further would require changing the algorithm rather than the memory
+access pattern — temporal blocking to do several timesteps per load, or single
+precision, which on consumer GeForce hardware runs 64× faster than FP64 and
+would move the arithmetic intensity and the ceiling together.
+
 
 ## Microfluidic gradient generation
 
@@ -64,26 +119,6 @@ combined scheme is second-order in the diffusive term and first-order in the
 advective one. The timestep must satisfy both the diffusive stability limit and
 the CFL condition; `max_stable_dt_advective` returns the tighter of the two.
 
-### Reading these numbers
-
-**Speedup grows with problem size** because the GPU's fixed costs — memory
-allocation, host-device transfer, kernel launch — are amortized over more
-parallel work. At 128² the grid has only ~16k cells, too few to fill the
-device.
-
-**It peaks at 1024² and declines at 2048².** At that size each buffer is 32 MB
-of doubles, so the working set exceeds cache and the kernel becomes bound by
-memory bandwidth rather than compute. A five-point stencil performs few
-arithmetic operations per byte loaded, so it is memory-bound by nature.
-
-**Double precision is a significant handicap on this hardware.** Consumer
-GeForce cards restrict FP64 throughput to a fraction of FP32. The 15× measured
-here is on the restricted path; the same kernel in single precision would show
-a substantially larger gap.
-
-**GPU timings require a warmup.** CUDA context initialization cost over a
-second on the first call — charged entirely to whichever measurement ran
-first. The benchmark now discards a warmup run before timing.
 
 ## Building
 
@@ -109,6 +144,7 @@ cmake -B build -T "cuda=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6
 ./build/diffusion 128 500     # simulate, write field.csv
 ./build/validate              # convergence study, write validation.csv
 ./build/benchmark             # CPU vs GPU timings, write benchmark.csv
+./build/gradient              # gradient simulation, write frames/
 ```
 
 Plots are generated from the CSVs:
@@ -116,6 +152,7 @@ Plots are generated from the CSVs:
 ```bash
 python scripts/plot_validation.py
 python scripts/plot_benchmark.py
+python scripts/plot_roofline.py
 ```
 
 ## Design notes
@@ -143,5 +180,5 @@ on the device. Copying each step would make the GPU slower than the CPU.
 - [x] CPU vs GPU benchmark across grid sizes
 - [x] Advection with upwind differencing
 - [x] Microfluidic gradient-generator simulation
-- [ ] Shared-memory tiling and roofline analysis
+- [x] Shared-memory tiling and roofline analysis
 - [ ] Branching "Christmas tree" channel geometry
