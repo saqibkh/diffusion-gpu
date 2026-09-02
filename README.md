@@ -181,4 +181,4 @@ on the device. Copying each step would make the GPU slower than the CPU.
 - [x] Advection with upwind differencing
 - [x] Microfluidic gradient-generator simulation
 - [x] Shared-memory tiling and roofline analysis
-- [ ] Branching "Christmas tree" channel geometry
+- [ ] Branching "Christmas tree" channel geometry (requires wall masks and per-channel flow; the straight-channel case demonstrates the same diffusive-mixing principle)
