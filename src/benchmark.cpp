@@ -31,8 +31,7 @@ double max_abs_diff(const Field& a, const Field& b) {
 int main() {
     const int steps = 200;
 
-    // Absorb CUDA context initialisation so it isn't charged to the first
-    // timed run.
+    // Warm up the CUDA context.
     {
         Field warm(64, 64);
         SimulationParams wp;
@@ -41,8 +40,7 @@ int main() {
     }
 
     std::ofstream out("benchmark.csv");
-    out << "n,cpu_ms,gpu_ms,speedup,max_diff\n";
-
+    out << "n,cpu_ms,gpu_ms,tiled_ms,speedup,tiled_speedup,tiled_vs_naive\n";
     std::cout << std::fixed << std::setprecision(2);
 
     for (std::size_t n : {128u, 256u, 512u, 1024u, 2048u}) {
@@ -63,17 +61,28 @@ int main() {
         const double gpu_ms =
             std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-        const double diff = max_abs_diff(cpu_field, gpu_field);
+        Field tiled_field = make_initial(n);
+        t0 = Clock::now();
+        run_cuda_tiled(tiled_field, p, steps);
+        t1 = Clock::now();
+        const double tiled_ms =
+            std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+        const double d_naive = max_abs_diff(cpu_field, gpu_field);
+        const double d_tiled = max_abs_diff(cpu_field, tiled_field);
 
         std::cout << n << "x" << n
-                  << "  CPU " << cpu_ms << " ms"
-                  << "  GPU " << gpu_ms << " ms"
-                  << "  speedup " << (cpu_ms / gpu_ms) << "x"
-                  << "  max|diff| " << std::scientific << diff
+                  << "  CPU " << cpu_ms
+                  << "  naive " << gpu_ms << " (" << (cpu_ms / gpu_ms) << "x)"
+                  << "  tiled " << tiled_ms << " (" << (cpu_ms / tiled_ms) << "x)"
+                  << "  tiled/naive " << (gpu_ms / tiled_ms) << "x"
+                  << std::scientific
+                  << "  diff " << d_naive << " / " << d_tiled
                   << std::fixed << "\n";
 
-        out << n << "," << cpu_ms << "," << gpu_ms << ","
-            << (cpu_ms / gpu_ms) << "," << diff << "\n";
+        out << n << "," << cpu_ms << "," << gpu_ms << "," << tiled_ms << ","
+            << (cpu_ms / gpu_ms) << "," << (cpu_ms / tiled_ms) << ","
+            << (gpu_ms / tiled_ms) << "\n";
     }
 
     std::cout << "Wrote benchmark.csv\n";
